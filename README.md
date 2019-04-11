@@ -138,16 +138,7 @@ autozoom <- function(dataset.name){
 }
 ```
 
-6. `%!in%`
-```
-'%!in%' <- function(x,y){
-  !('%in%'(x,y))
-}
-# https://www.rdocumentation.org/packages/mefa4/versions/0.3-5/topics/%25notin%25 
-```
-
-
-7. impute_before
+6. impute_before
 ```
 impute_before <- function(vector_form){
   index <- which(!is.na(vector_form))
@@ -159,7 +150,7 @@ impute_before <- function(vector_form){
 # impute NA right before object
 ```
 
-8. tbl_iconv
+7. tbl_iconv
 ```
 tbl_iconv <- function(tibble_data, type){
   tibble_data_get <- tibble_data %>% 
