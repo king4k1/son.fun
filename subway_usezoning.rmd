@@ -1,0 +1,107 @@
+---
+title: "find usezoning of subway station"
+author: "Kwangmin Son"
+date: "2019년 3월 1일"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+## load packages & data
+```{r, message=FALSE, warning=FALSE}
+library(maptools)
+library(rgdal)
+library(rgeos)
+library(raster)
+library(tidyverse)
+library(geosphere)
+# shp file
+usezoning <- readOGR(dsn="data", layer="seoul_usezoning",
+                     encoding = "UTF-8", verbose = TRUE)
+
+# station info
+station <- data.table::fread(file="data/station_seoul.csv")
+station <- station %>% dplyr::select(-V1, -ExCode)
+```
+
+## make grid within spatial data
+```{r}
+## set cellsize : set 88m(almost) distance for grid
+cs <- c(0.001, 0.001)
+grdpts <- makegrid(usezoning, cellsize = cs)
+spgrd <- SpatialPoints(grdpts, proj4string = CRS(proj4string(usezoning)))
+spgrdWithin <- SpatialPixels(spgrd[usezoning,])
+plot(spgrdWithin)
+
+## match with shp data file
+inusz <- over(spgrdWithin, usezoning)
+
+## make dataset
+gridpoint <- spgrdWithin@coords
+gridpoint_usz <- cbind(gridpoint, as.character(inusz$LABEL))
+gridpoint_usz <- as.data.frame(gridpoint_usz)
+colnames(gridpoint_usz) <- c("long", "lat", "usz")
+
+## make rules about category about usezoning
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$usz, "준주거"),
+                                 "상업", as.character(gridpoint_usz$usz))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "주거"),
+                                 "주거", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "상업"),
+                                 "상업", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "공업"),
+                                 "공업", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "자연녹지지역"),
+                                 "녹지", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "기타사업"),
+                                 "etc", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "도시계획 시설"),
+                                 "etc", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "용도지역"),
+                                 "etc", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "토지구획정리사업"),
+                                 "etc", as.character(gridpoint_usz$type))
+## check ratio about usezoning type
+table(gridpoint_usz$type)
+
+## preprocessing
+long_rec <- station$long[21]
+lat_rec <- station$lat[21]
+gridpoint_usz$long <- as.character(gridpoint_usz$long)
+gridpoint_usz$lat <- as.character(gridpoint_usz$lat)
+gridpoint_usz$usz <- as.character(gridpoint_usz$usz)
+
+## make function
+find_usezoning_circle <- function(long_rec, lat_rec){
+  longcut <- gridpoint_usz[which(gridpoint_usz$long <= long_rec + 0.00566 &
+                                 gridpoint_usz$long >= long_rec -0.00566),]
+  ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
+  latcut <- longcut[which(longcut$lat <= lat_rec + 0.00449 &
+                          longcut$lat >= lat_rec - 0.00449),]
+  ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
+  ### 즉, 역 기준으로 1km의 정사각형 구간으로 공간을 한정합니다.
+  ### 이후 distHaversine 수식을 이용하여 500m 내에 포함되는 spot만 간추려냅니다.
+  dist <- c()
+  for(i in 1:nrow(latcut)){
+    dist[i] <- distHaversine(c(as.numeric(latcut$long[i]),
+                             as.numeric(latcut$lat[i])),
+                             c(long_rec, lat_rec))
+  }
+  latcut_result <- latcut[which(dist <= 500),]
+  result <- latcut_result %>% select(type) %>% group_by(type)%>% summarise(ratio=n()/82)
+  gg <- ggplot(latcut_result, aes(x=long, y=lat, col=type)) + geom_point()
+  result_list <- list(table = result, plot = gg)
+  result_list
+}
+
+station[21,]
+find_usezoning_circle(long_rec = station$long[21], lat_rec = station$lat[21])
+
+station[14,]
+find_usezoning_circle(long_rec = station$long[14], lat_rec = station$lat[14])
+
+
+for(i in 1:222){
+  
+}
+```

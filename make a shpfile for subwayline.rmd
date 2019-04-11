@@ -1,0 +1,159 @@
+---
+title: "make a shpfile for subwayline"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+### load packages
+```{r}
+library(maptools)
+library(rgdal)
+library(rgeos)
+library(seoulsubway)
+library(raster)
+```
+
+### test ! : from the sp vignette
+```{r}
+l1 <- cbind(c(1, 2, 3), c(3, 2, 2))
+l2 <- cbind(c(1, 2, 3), c(1, 1.5, 1))
+
+Sl1 <- Line(l1)
+Sl2 <- Line(l2)
+
+S1 <- Lines(list(Sl1), ID = "a")
+S2 <- Lines(list(Sl2), ID = "b")
+
+Sl <- SpatialLines(list(S1, S2))
+```
+
+### make it ! : seoul subway line
+```{r}
+data("subway_data")
+head(subway_data[["1_P"]])
+data_1_P <- subway_data[["1_P"]]
+l1 <- cbind(seq(data_1_P[1 ,"lat"], data_1_P[2,"lat"], length =5000), seq(data_1_P[1 ,"long"], data_1_P[2,"long"], length =5000))
+Sl1 <- Line(l1)
+plot(Sl1@coords)
+
+Line <- "1"
+make_linesp <- function(Line){
+  line_data <- subway_data[[Line]]
+  Spline <- list()
+if(Line %in% c("2","6_A")){
+  for(i in 1:(nrow(line_data)-1)){
+  ll <- cbind(c(as.numeric(line_data[i,"long"]),
+                as.numeric(line_data[i+1,"long"])),
+              c(as.numeric(line_data[i,"lat"]),
+                as.numeric(line_data[i+1,"lat"])))
+
+  ll2 <- cbind(c(as.numeric(line_data[i,"long"]),
+                 as.numeric(line_data[i+1,"long"])),
+               c(as.numeric(line_data[i,"lat"]),
+                 as.numeric(line_data[i+1,"lat"])))
+  
+  Sl <- Line(ll)
+  a <- paste0(Line,"_",i)
+  S1 <- Lines(list(Sl), ID = a)
+  Spline[[i]] <- S1
+  }
+  n <- nrow(line_data)
+  ll <- cbind(c(as.numeric(line_data[n,"long"]),
+                as.numeric(line_data[1,"long"])),
+              c(as.numeric(line_data[n,"lat"]),
+                as.numeric(line_data[1,"lat"])))
+  Sl <- Line(ll)
+  a <- paste0(Line,"_",n)
+  S1 <- Lines(list(Sl), ID = a)
+  Spline[[nrow(line_data)]] <- S1 
+}else{  
+  for(i in 1:(nrow(line_data)-1)){
+  ll <- cbind(c(as.numeric(line_data[i,"long"]),
+                         as.numeric(line_data[i+1,"long"])),
+              c(as.numeric(line_data[i,"lat"]),
+                as.numeric(line_data[i+1,"lat"])))
+  Sl <- Line(ll)
+  a <- paste0(Line,"_",i)
+  S1 <- Lines(list(Sl), ID = a)
+  Spline[[i]] <- S1
+  }
+}
+Splineset <- SpatialLines(Spline)
+df <- data.frame(len = sapply(1:length(Splineset), function(i) gLength(Splineset[i, ])))
+rownames(df) <- sapply(1:length(Splineset), function(i) Splineset@lines[[i]]@ID)
+## SpatialLines to SpatialLinesDataFrame
+Sldf <- SpatialLinesDataFrame(Splineset, data = df)
+return(Sldf)
+}
+
+sp <- make_linesp("2")
+plot(sp)
+```
+
+### combine all line's shp to one shp file
+
+* set rownames as station's ExCode's format
+```{r}
+sp <- list()
+for(i in 1:length(subway_data)){
+  sp[[i]] <- make_linesp(names(subway_data)[i])
+}
+
+subway_shp <- bind(sp[[1]], sp[[2]])
+for(i in 3:22){
+  subway_shp <- bind(subway_shp, sp[[i]])
+}
+
+name <- rownames(sp[[1]]@data)
+for(i in 2:22){
+name <- c(name, rownames(sp[[i]]@data))
+}
+rownames(subway_shp@data) <- name
+
+for(i in 1:22){
+subway_shp@lines[[i]]@ID <- names(subway_data)[i]
+}
+
+make_ds_sna <- function(line) {
+    n <- nrow(subway_data[[line]])
+    adj <- data.frame(matrix(0, n - 1, 3))
+    colnames(adj) <- c("출발역", "도착역", "호선")
+    if (isTRUE(line != "2")) {
+        for (i in 1:(n - 1)) {
+            adj[i, ] <- c(subway_data[[line]][i, "ExCode"], subway_data[[line]][i + 
+                1, "ExCode"], line)
+        }
+    }
+    if (line == "6_A") {
+        for (i in 1:(n - 1)) {
+            adj[i, ] <- c(subway_data[[line]][i, "ExCode"], subway_data[[line]][i + 
+                1, "ExCode"], line)
+        }
+        adj <- rbind(adj, data.frame(출발역 = "615", 도착역 = "610", 호선 = "6_A"))
+    }
+    if (line == "2") {
+        for (i in 1:(n - 1)) {
+            adj[i, ] <- c(subway_data[[line]][i, "ExCode"], subway_data[[line]][i + 
+                1, "ExCode"], line)
+        }
+        adj <- rbind(adj, data.frame(출발역 = "243", 도착역 = "201", 호선 = "2"))
+    }
+    return(adj)
+}
+
+mat <- make_ds_sna("1") 
+for(i in 2:22){
+  mat <- rbind(mat, make_ds_sna(names(subway_data)[i]))
+}
+
+mat$Name <- paste0(mat$호선,"_", mat$출발역, "_", mat$도착역)
+head(mat)
+rownames(subway_shp@data) <- mat$Name
+subway_shp@data
+subway_shp@data$name  <- mat$Name
+
+plot(subway_shp)
+writeOGR(subway_shp, layer = 'subway_shp', "D:/subway_analysis/SNA", driver="ESRI Shapefile")
+```
+

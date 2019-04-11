@@ -1,0 +1,138 @@
+---
+title: "seoul usezoning shpfile"
+author: |
+  | KwangMin Son
+date: \today
+output: pdf_document
+fontsize: 12pt
+incremental: true
+header-includes:
+  - \usepackage{kotex}
+editor_options: 
+  chunk_output_type: console
+---
+
+## load packages
+```{r, message=FALSE}
+library(maptools)
+library(rgdal)
+library(rgeos)
+library(raster)
+library(tidyverse)
+```
+
+## **공공데이터 포털 서울특별시 용도구역, 용도지구, 용도지역 위치정보**
+
+공공데이터 포털에서 제공하는 3가지의 용도지역 파일에 대하여 하나의 용도지역 파일로 변환합니다.
+
+이 shp 파일은 주거지역, 공업지역, 그리고 상업지역에 대한 정보를 포함합니다.
+
+기존 ITRF2000 형태의 좌표계를 위경도로 변환하였습니다.
+
+```{r, eval=FALSE, echo = FALSE}
+gong_zoning <- readOGR(dsn="usezoning_shpfile/gong",
+                       layer="UPIS_SHP_UQA300", encoding = "UTF-8")
+gong_zoning <- spTransform(gong_zoning, CRS("+proj=longlat +datum=NAD83"))
+
+ju_zoning <- readOGR(dsn="usezoning_shpfile/ju",
+                       layer="UPIS_SHP_UQA100", encoding = "UTF-8")
+ju_zoning <- spTransform(ju_zoning, CRS("+proj=longlat +datum=NAD83"))
+
+sang_zoning <- readOGR(dsn="usezoning_shpfile/sang",
+                       layer="UPIS_SHP_UQA200", encoding = "UTF-8")
+sang_zoning <- spTransform(sang_zoning, CRS("+proj=longlat +datum=NAD83"))
+
+gong_zoning_fty <- fortify(gong_zoning)
+sang_zoning_fty <- fortify(sang_zoning)
+ju_zoning_fty <- fortify(ju_zoning)
+
+ggplot(data = gong_zoning_fty, aes(x=long, y = lat, group=group)) + geom_path()
+ggplot(data = sang_zoning_fty, aes(x=long, y = lat, group=group)) + geom_path()
+ggplot(data = ju_zoning_fty, aes(x=long, y = lat, group=group)) + geom_path()
+```
+
+
+## 서울지역 지도 위 용도지역별 시각화
+```{r, echo=FALSE, eval=FALSE, message=FALSE}
+usezoning <- bind(sang_zoning, gong_zoning)
+usezoning <- bind(usezoning, ju_zoning)
+
+### 결측값 수정
+usezoning@data[which(is.na(usezoning@data$ENT_NAME)),"ENT_NAME"] <- "제1종일반주거지역"
+
+usezoning_fty <- fortify(usezoning)
+usezoning_label <- data.frame(id = as.character(1:5910),
+                              LABEL = usezoning@data$LABEL,
+                              ENT_NAME = usezoning@data$ENT_NAME)
+usezoning_fty <- left_join(usezoning_fty,
+                           usezoning_label)
+
+ggplot(data = usezoning_fty, aes(x=long, y = lat, group=group, col=ENT_NAME)) + geom_path()
+
+#writeOGR(dsn="usezoning_shpfile", layer="seoul_usezoning", usezoning, driver="ESRI Shapefile")
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+usezoning <- readOGR(dsn="data", layer="seoul_usezoning",
+                     encoding = "UTF-8", verbose = TRUE)
+
+usezoning_fty <- fortify(usezoning)
+usezoning_label <- data.frame(id = as.character(0:5909),
+                              LABEL = usezoning@data$LABEL,
+                              ENT_NAME = usezoning@data$ENT_NAME)
+usezoning_fty <- left_join(usezoning_fty,
+                           usezoning_label)
+usezoning_fty$ENT_NAME <- iconv(as.character(usezoning_fty$ENT_NAME), "cp949")
+ggplot(data = usezoning_fty, aes(x=long, y = lat, group=group, col=ENT_NAME)) + geom_path()
+```
+
+
+## 용도지역을 주거/상업/공업/녹지/etc 로 구분
+```{r, message=FALSE, warning=FALSE} 
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$ENT_NAME, "준주거"),
+                                 "상업", as.character(usezoning_fty$ENT_NAME))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "주거"),
+                                 "주거", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "상업"),
+                                 "상업", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "공업"),
+                                 "공업", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "자연녹지지역"),
+                                 "녹지", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "기타사업"),
+                                 "etc", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "도시계획 시설"),
+                                 "etc", as.character(usezoning_fty$usz))
+usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "용도지역"),
+                                 "etc", as.character(usezoning_fty$usz))
+```
+
+## 지하철 데이터를 이용한 주위 용도지역 구분 확인
+
+지하철 역을 기준으로 너비 1km^2의 정사각형 공간 내 용도지역 형태를 확인하였습니다.
+
+정량화한 데이터 수치로 위 5개의 용도지역 수치를 반영하고 싶습니다.
+
+```{r , message=FALSE, warning=FALSE}
+station <- data.table::fread(file="data/station_seoul.csv")
+station <- station %>% dplyr::select(-V1, -ExCode)
+
+head(usezoning_fty)
+find_usezoning <- function(long_rec, lat_rec){
+  longcut <- usezoning_fty[which(usezoning_fty$long <= long_rec + 0.00566 &
+                                 usezoning_fty$long >= long_rec -0.00566),]
+  ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
+  latcut <- longcut[which(longcut$lat <= lat_rec + 0.00449 &
+                          longcut$lat >= lat_rec - 0.00449),]
+  ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
+  ### 즉, 역 기준으로 1km의 정사각형 박스 내 용도지역을 확인하는 방법입니다.
+  result <- latcut %>% select(id, usz) %>% 
+    group_by(usz) %>% unique() %>% summarise(n=n())
+  gg <- ggplot(latcut, aes(x=long, y=lat, group=group, col=usz)) + geom_path()
+  result_list <- list(table = result, plot = gg)
+  result_list
+}
+
+station[21,]
+find_usezoning(long_rec = station$long[21], lat_rec = station$lat[21])
+```
