@@ -88,7 +88,7 @@ ggplot(data = usezoning_fty, aes(x=long, y = lat, group=group, col=ENT_NAME)) + 
 
 
 ## 용도지역을 주거/상업/공업/녹지/etc 로 구분
-```{r, message=FALSE, warning=FALSE} 
+```{r, message=FALSE, warning=FALSE}
 usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$ENT_NAME, "준주거"),
                                  "상업", as.character(usezoning_fty$ENT_NAME))
 usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "주거"),
@@ -119,16 +119,15 @@ station <- station %>% dplyr::select(-V1, -ExCode)
 
 head(usezoning_fty)
 find_usezoning <- function(long_rec, lat_rec){
-  longcut <- usezoning_fty[which(usezoning_fty$long <= long_rec + 0.00566 &
-                                 usezoning_fty$long >= long_rec -0.00566),]
+  longlat_cut <- usezoning_fty %>% 
+    filter(long <= long_rec + 0.00566 & long >= long_rec -0.00566) %>% 
+    filter(lat <= long_rec + 0.00449 & lat >= long_rec -0.00449)
   ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
-  latcut <- longcut[which(longcut$lat <= lat_rec + 0.00449 &
-                          longcut$lat >= lat_rec - 0.00449),]
   ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
   ### 즉, 역 기준으로 1km의 정사각형 박스 내 용도지역을 확인하는 방법입니다.
-  result <- latcut %>% select(id, usz) %>% 
+  result <- longlat_cut %>% select(id, usz) %>% 
     group_by(usz) %>% unique() %>% summarise(n=n())
-  gg <- ggplot(latcut, aes(x=long, y=lat, group=group, col=usz)) + geom_path()
+  gg <- ggplot(longlat_cut, aes(x=long, y=lat, group=group, col=usz)) + geom_path()
   result_list <- list(table = result, plot = gg)
   result_list
 }
