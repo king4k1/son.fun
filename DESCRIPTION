@@ -10,6 +10,12 @@ Description: Finding shortest path for subway in Seoul
 License: MIT + file LICENSE
 Depends:
   R (>= 3.4.4),
+  maptools, 
+  rgdal, 
+  rgeos, 
+  raster,
+  sp,
+  geosphere,
   tidyverse
   
 LazyData: true

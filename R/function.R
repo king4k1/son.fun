@@ -189,8 +189,6 @@ find_usezoning_circle <- function(long_select, lat_select, sd_select){
     scale_y_discrete(breaks=c(as.numeric(seq(min(latcut_result$lat), 
                                              max(latcut_result$lat), 0.0002)))) +
     theme_bw()
-  
-  n_point <- nrow(latcut_result)
-  result_list <- list(table = result, n = n_point, plot = gg)
+  result_list <- list(table = result, plot = gg)
   result_list
 }
