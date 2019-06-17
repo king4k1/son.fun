@@ -19,6 +19,8 @@ library(rgdal)
 library(rgeos)
 library(raster)
 library(tidyverse)
+library(sp)
+library(geosphere)
 ```
 
 ## **공공데이터 포털 서울특별시 용도구역, 용도지구, 용도지역 위치정보**
@@ -114,18 +116,17 @@ usezoning_fty$usz <- ifelse(str_detect(usezoning_fty$usz, "용도지역"),
 정량화한 데이터 수치로 위 5개의 용도지역 수치를 반영하고 싶습니다.
 
 ```{r , message=FALSE, warning=FALSE}
-station <- data.table::fread(file="data/station_seoul.csv")
+station <- data.table::fread(file="../data/station_seoul.csv")
 station <- station %>% dplyr::select(-V1, -ExCode)
 
-head(usezoning_fty)
 find_usezoning <- function(long_rec, lat_rec){
   longlat_cut <- usezoning_fty %>% 
     filter(long <= long_rec + 0.00566 & long >= long_rec -0.00566) %>% 
-    filter(lat <= long_rec + 0.00449 & lat >= long_rec -0.00449)
+    filter(lat <= lat_rec + 0.00449 & lat >= lat_rec -0.00449)
   ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
   ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
   ### 즉, 역 기준으로 1km의 정사각형 박스 내 용도지역을 확인하는 방법입니다.
-  result <- longlat_cut %>% select(id, usz) %>% 
+  result <- longlat_cut %>% dplyr::select(id, usz) %>% 
     group_by(usz) %>% unique() %>% summarise(n=n())
   gg <- ggplot(longlat_cut, aes(x=long, y=lat, group=group, col=usz)) + geom_path()
   result_list <- list(table = result, plot = gg)
@@ -135,3 +136,103 @@ find_usezoning <- function(long_rec, lat_rec){
 station[21,]
 find_usezoning(long_rec = station$long[21], lat_rec = station$lat[21])
 ```
+
+## 그리드를 이용한 용도지역 점수 계산 
+
+* 100m 간격으로 그리드를 생성하여 가우시안 커널을 통하여 가중치 부여
+
+* 용도지역별 합계를 통하여 지하철역의 반경 500m 점수 계산
+
+```{r}
+cs <- c(0.00092, 0.0009)
+grdpts <- makegrid(usezoning, cellsize = cs)
+spgrd <- SpatialPoints(grdpts, proj4string = CRS(proj4string(usezoning)))
+spgrdWithin <- SpatialPixels(spgrd[usezoning,])
+
+## match with shp data file
+inusz <- over(spgrdWithin, usezoning)
+
+## make dataset
+gridpoint <- spgrdWithin@coords
+gridpoint_usz <- cbind(gridpoint, as.character(inusz$LABEL))
+gridpoint_usz <- as.data.frame(gridpoint_usz)
+colnames(gridpoint_usz) <- c("long", "lat", "usz")
+
+## make rules about category about usezoning
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$usz, "준주거"),
+                                 "준주거", as.character(gridpoint_usz$usz))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "주거"),
+                                 "주거", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "상업"),
+                                 "상업", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "공업"),
+                                 "공업", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "자연녹지지역"),
+                                 "etc", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "기타사업"),
+                                 "etc", as.character(gridpoint_usz$type))
+gridpoint_usz$type <- ifelse(str_detect(gridpoint_usz$type, "도시계획 시설|용도지역|토지구획정리사업"), "etc", as.character(gridpoint_usz$type))
+## check ratio about usezoning type
+# table(gridpoint_usz$type)
+
+## preprocessing
+gridpoint_usz$long <- as.character(gridpoint_usz$long)
+gridpoint_usz$lat <- as.character(gridpoint_usz$lat)
+gridpoint_usz$usz <- as.character(gridpoint_usz$usz)
+
+# edit gausskernel in KRLS pack.
+gausskernel_Haversine <- function (origin, mat = NULL, sigma = NULL) {
+    return(exp(-1 * as.matrix(distHaversine(origin, mat)^2)/sigma))
+}
+
+
+find_usezoning_circle <- function(long_select, lat_select, sd_select){
+  data(gridpoint_usz, envir = environment())
+  longcut <- gridpoint_usz[which(gridpoint_usz$long <= long_select + 0.00566 &
+                                 gridpoint_usz$long >= long_select -0.00566),]
+  ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
+  latcut <- longcut[which(longcut$lat <= lat_select + 0.00449 &
+                          longcut$lat >= lat_select - 0.00449),]
+  ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
+  ### 즉, 역 기준으로 1km의 정사각형 구간으로 공간을 한정합니다.
+  ### 이후 distHaversine 수식을 이용하여 500m 내에 포함되는 spot만 간추려냅니다.
+  dist <- c()
+  for(i in 1:nrow(latcut)){
+    dist[i] <- distHaversine(c(as.numeric(latcut$long[i]),
+                               as.numeric(latcut$lat[i])),
+                               c(long_select, lat_select))
+  }
+  latcut_result <- latcut[which(dist <= 500 & dist !=0),]
+  latcut_result$dist <- dist[which(dist <= 500 & dist !=0)]
+  if(length(dist)==1){
+    latcut_result <- latcut
+  }
+  latcut_result$weight_sd <- 
+    gausskernel_Haversine(origin = c(long_select, lat_select),
+                          mat = data.matrix(latcut_result[,c("long","lat")]),
+                          sigma = sd_select^2)[,1]
+  if(length(dist)==1){
+    latcut_result$weight_sd <- 0
+  }
+  result <- latcut_result %>% 
+    group_by(type) %>% 
+    summarise(ratio=sum(weight_sd)) %>% spread(type, ratio)
+  gg <- ggplot(latcut_result, 
+               aes(x=long, y=lat, col = type, size=weight_sd)) + 
+    geom_point() + coord_fixed() + 
+    scale_x_discrete(breaks=c(as.numeric(seq(min(latcut_result$long), 
+                                  max(latcut_result$long), 0.0002)))) + 
+    scale_y_discrete(breaks=c(as.numeric(seq(min(latcut_result$lat), 
+                                  max(latcut_result$lat), 0.0002)))) +
+    theme_bw()
+
+  n_point <- nrow(latcut_result)
+  result_list <- list(table = result, n = n_point, plot = gg)
+  result_list
+}
+
+
+station[21,]
+find_usezoning_circle(long_select = station$long[21], lat_select = station$lat[21], sd_select = 500)
+```
+

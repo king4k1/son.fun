@@ -141,3 +141,56 @@ address_station <- function(code, apikey) {
   return(result)
 }
 
+
+### 용도지역 점수 
+### seoul_usezoning.rmd 참고
+
+gausskernel_Haversine <- function (origin, mat = NULL, sigma = NULL) {
+  return(exp(-1 * as.matrix(distHaversine(origin, mat)^2)/sigma))
+}
+
+
+find_usezoning_circle <- function(long_select, lat_select, sd_select){
+  data(gridpoint_usz, envir = environment())
+  longcut <- gridpoint_usz[which(gridpoint_usz$long <= long_select + 0.00566 &
+                                   gridpoint_usz$long >= long_select -0.00566),]
+  ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
+  latcut <- longcut[which(longcut$lat <= lat_select + 0.00449 &
+                            longcut$lat >= lat_select - 0.00449),]
+  ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
+  ### 즉, 역 기준으로 1km의 정사각형 구간으로 공간을 한정합니다.
+  ### 이후 distHaversine 수식을 이용하여 500m 내에 포함되는 spot만 간추려냅니다.
+  dist <- c()
+  for(i in 1:nrow(latcut)){
+    dist[i] <- distHaversine(c(as.numeric(latcut$long[i]),
+                               as.numeric(latcut$lat[i])),
+                             c(long_select, lat_select))
+  }
+  latcut_result <- latcut[which(dist <= 500 & dist !=0),]
+  latcut_result$dist <- dist[which(dist <= 500 & dist !=0)]
+  if(length(dist)==1){
+    latcut_result <- latcut
+  }
+  latcut_result$weight_sd <- 
+    gausskernel_Haversine(origin = c(long_select, lat_select),
+                          mat = data.matrix(latcut_result[,c("long","lat")]),
+                          sigma = sd_select^2)[,1]
+  if(length(dist)==1){
+    latcut_result$weight_sd <- 0
+  }
+  result <- latcut_result %>% 
+    group_by(type) %>% 
+    summarise(ratio=sum(weight_sd)) %>% spread(type, ratio)
+  gg <- ggplot(latcut_result, 
+               aes(x=long, y=lat, col = type, size=weight_sd)) + 
+    geom_point() + coord_fixed() + 
+    scale_x_discrete(breaks=c(as.numeric(seq(min(latcut_result$long), 
+                                             max(latcut_result$long), 0.0002)))) + 
+    scale_y_discrete(breaks=c(as.numeric(seq(min(latcut_result$lat), 
+                                             max(latcut_result$lat), 0.0002)))) +
+    theme_bw()
+  
+  n_point <- nrow(latcut_result)
+  result_list <- list(table = result, n = n_point, plot = gg)
+  result_list
+}
