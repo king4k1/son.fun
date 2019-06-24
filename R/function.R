@@ -152,11 +152,12 @@ gausskernel_Haversine <- function (origin, mat = NULL, sigma = NULL) {
 
 find_usezoning_circle <- function(long_select, lat_select, sd_select){
   data(gridpoint_usz, envir = environment())
-  longcut <- gridpoint_usz[which(gridpoint_usz$long <= long_select + 0.00566 &
-                                   gridpoint_usz$long >= long_select -0.00566),]
+  data(usezoning_fty, envir = environment())
+  longcut <- gridpoint_usz[which(gridpoint_usz$long <= long_select + 0.006 &
+                                   gridpoint_usz$long >= long_select -0.006),]
   ### long 기준으로 0.00566정도는 좌우로 약 500m 거리의 지점을 의미합니다.
-  latcut <- longcut[which(longcut$lat <= lat_select + 0.00449 &
-                            longcut$lat >= lat_select - 0.00449),]
+  latcut <- longcut[which(longcut$lat <= lat_select + 0.005 &
+                            longcut$lat >= lat_select - 0.005),]
   ### lat 기준으로 0.00449정도는 상하로 약 500m 거리의 지점을 의미합니다.
   ### 즉, 역 기준으로 1km의 정사각형 구간으로 공간을 한정합니다.
   ### 이후 distHaversine 수식을 이용하여 500m 내에 포함되는 spot만 간추려냅니다.
@@ -181,14 +182,19 @@ find_usezoning_circle <- function(long_select, lat_select, sd_select){
   result <- latcut_result %>% 
     group_by(type) %>% 
     summarise(ratio=sum(weight_sd)) %>% spread(type, ratio)
-  gg <- ggplot(latcut_result, 
-               aes(x=long, y=lat, col = type, size=weight_sd)) + 
-    geom_point() + coord_fixed() + 
-    scale_x_discrete(breaks=c(as.numeric(seq(min(latcut_result$long), 
-                                             max(latcut_result$long), 0.0002)))) + 
-    scale_y_discrete(breaks=c(as.numeric(seq(min(latcut_result$lat), 
-                                             max(latcut_result$lat), 0.0002)))) +
-    theme_bw()
+  
+  station_fty <- usezoning_fty %>% 
+    filter(long <= long_select + 0.006, long > long_select - 0.006,
+           lat <= lat_select + 0.005, lat > lat_select - 0.005)  
+  
+  gg <- ggplot() + 
+    geom_polygon(aes(x=long, y=lat, group=group), 
+                 fill='white', color='black', data=station_fty) + 
+    geom_point(data = latcut_result, 
+               aes(x=as.numeric(long), y=as.numeric(lat), 
+                   col = type, size=weight_sd)) + 
+    theme_bw() + xlab("경도") + ylab("위도")
+  #n_point <- nrow(latcut_result)
   result_list <- list(table = result, plot = gg)
   result_list
 }
